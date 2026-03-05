@@ -1,0 +1,68 @@
+# 模型文件 (使用Git LFS管理)
+# *.pth  # 现在通过Git LFS管理
+*.pkl
+*.h5
+*.ckpt
+*.pb
+
+# 数据集文件 (太大，不适合Git)
+*.zip
+*.tar.gz
+*.rar
+data/
+
+# Python缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 虚拟环境
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统文件
+.DS_Store
+Thumbs.db
+*.log
+
+# 训练结果文件
+results/
+logs/
+checkpoints/
+models/
+outputs/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# 临时文件
+*.tmp
+*.temp
