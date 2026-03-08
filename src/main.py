@@ -2,18 +2,48 @@
 """
 岩石图像分类 - 主训练脚本
 
+功能说明：
+    1. 单模型训练：训练单个模型进行岩石图像分类
+    2. 集成学习训练：训练多个模型并进行集成预测
+    3. 模式选择：提供快速测试、快速训练、完整训练三种模式
+    4. 命令行参数：支持灵活的参数配置
+
+训练模式：
+    - quick（快速测试）：5轮训练，ResNet18，小批次，约10分钟
+    - fast（快速训练）：15轮训练，ResNet18，大批次，约25分钟
+    - full（完整训练）：30轮训练，ResNet50，标准批次，约30-60分钟
+
 使用示例:
-    # 快速测试
+    # 快速测试（验证代码运行）
     python main.py --mode quick
 
-    # 快速训练
+    # 快速训练（快速迭代实验）
     python main.py --mode fast
 
-    # 完整训练
-    python main.py --model resnet50 --epochs 50
+    # 完整训练（标准单模型训练）
+    python main.py --model resnet50 --epochs 30
 
-    # 集成学习
+    # 集成学习（最高精度）
     python main.py --ensemble --epochs 30
+
+主要参数：
+    --model: 模型架构（resnet18/34/50/101, efficientnet_b0/b1/b2, inception_v3, vgg11/13/16）
+    --epochs: 训练轮数（默认30）
+    --batch_size: 批次大小（默认32）
+    --lr: 学习率（默认0.001）
+    --ensemble: 启用集成学习
+    --mode: 训练模式（quick/fast/full）
+    --optimizer: 优化器（adam/adamw/sgd）
+    --scheduler: 学习率调度器（step/cosine/plateau）
+
+输出文件：
+    - models/: 训练好的模型文件
+    - results/: 训练结果图表和报告
+
+注意：
+    - 所有命令需要在 src 目录下运行
+    - 确保数据集位于 ../data/rock-data 目录
+    - 集成学习训练时间较长（约60分钟）
 """
 
 import torch

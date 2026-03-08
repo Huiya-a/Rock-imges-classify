@@ -1,6 +1,29 @@
 # -*- coding: utf-8 -*-
 """
 工具函数模块
+
+功能说明：
+    1. 模型评估：计算准确率、精确率、召回率、F1分数等指标
+    2. 可视化：绘制混淆矩阵、性能对比图等
+    3. 结果保存：保存分类报告、预测结果等
+    4. 模型信息：计算模型大小、参数数量等
+
+评估指标：
+    - Accuracy（准确率）：正确预测的样本占总样本的比例
+    - Precision（精确率）：预测为正的样本中真正为正的比例
+    - Recall（召回率）：真正为正的样本中被正确预测为正的比例
+    - F1-Score：精确率和召回率的调和平均数
+    - Confusion Matrix（混淆矩阵）：展示预测结果与真实标签的对应关系
+
+可视化功能：
+    - 混淆矩阵热力图
+    - 各类别性能对比图
+    - 训练历史曲线图
+
+使用说明：
+    - 所有函数都支持结果保存到文件
+    - 可视化函数支持自定义保存路径和图像大小
+    - 评估结果包含详细的分类报告
 """
 
 import torch
@@ -14,16 +37,42 @@ from config import Config
 
 def evaluate_model(predictions, targets, class_names, save_dir=None):
     """
-    评估模型性能
-    
-    Args:
-        predictions: 预测结果
-        targets: 真实标签
-        class_names: 类别名称
-        save_dir: 保存目录
-    
-    Returns:
-        dict: 评估结果
+    评估模型性能，计算多种分类指标
+
+    计算指标：
+        - 准确率（Accuracy）
+        - 精确率（Precision）：每个类别的精确率和宏/微平均
+        - 召回率（Recall）：每个类别的召回率和宏/微平均
+        - F1分数（F1-Score）：每个类别的F1分数和宏/微平均
+        - 混淆矩阵（Confusion Matrix）
+        - 分类报告（Classification Report）
+
+    参数：
+        predictions (list/array): 模型预测的类别标签
+        targets (list/array): 真实的类别标签
+        class_names (list): 类别名称列表
+        save_dir (str, optional): 结果保存目录，如果为None则不保存
+
+    返回：
+        dict: 包含所有评估指标的字典
+            - accuracy: 总体准确率
+            - precision: 每个类别的精确率数组
+            - recall: 每个类别的召回率数组
+            - f1_score: 每个类别的F1分数数组
+            - support: 每个类别的样本数数组
+            - macro_avg: 宏平均指标字典
+            - micro_avg: 微平均指标字典
+            - classification_report: 完整分类报告字典
+            - confusion_matrix: 混淆矩阵
+
+    输出：
+        - 打印评估结果到控制台
+        - 如果指定save_dir，保存分类报告到文件
+
+    注意：
+        - predictions和targets的长度必须相同
+        - class_names的顺序应与标签编号对应
+        - 保存的文件为UTF-8编码
     """
     # 计算准确率
     accuracy = accuracy_score(targets, predictions)
