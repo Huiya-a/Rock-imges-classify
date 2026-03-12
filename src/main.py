@@ -106,8 +106,12 @@ def parse_arguments():
     # 模型参数
     parser.add_argument('--model', type=str, default='resnet50',
                        choices=['resnet18', 'resnet34', 'resnet50', 'resnet101',
-                               'efficientnet_b0', 'efficientnet_b1', 'custom_cnn',
-                               'efficientnet_b2', 'inception_v3', 'vgg11', 'vgg13', 'vgg16'],
+                               'efficientnet_b0', 'efficientnet_b1', 'efficientnet_b2',
+                               'inception_v3', 'vgg11', 'vgg13', 'vgg16', 'custom_cnn',
+                               # 新增先进模型架构
+                               'densenet121',
+                               'convnext_tiny', 'convnext_base',
+                               'vit_base_patch16_224', 'vit_small_patch16_224'],
                        help='选择模型架构 (默认: resnet50)')
 
     # 训练参数
@@ -189,14 +193,14 @@ def update_config(args):
         Config.BATCH_SIZE = 16
         Config.EARLY_STOPPING = False
         Config.MODEL_TYPE = 'resnet18'
-        print("🚀 快速测试模式: 5轮训练, ResNet18, 小批次")
+        print("Quick test mode: 5 epochs, ResNet18, small batch size")
     elif args.mode == 'fast':
         Config.EPOCHS = 15
         Config.BATCH_SIZE = 64
         Config.MODEL_TYPE = 'resnet18'
-        print("⚡ 快速训练模式: 15轮训练, ResNet18, 大批次")
+        print("Fast training mode: 15 epochs, ResNet18, large batch size")
     else:
-        print("🔬 完整训练模式: 自定义参数")
+        print("Full training mode: custom parameters")
 
 def create_efficient_model(model_type='resnet18', num_classes=9, pretrained=True, dropout_rate=0.5):
     """创建高效的模型（针对快速训练优化）"""
@@ -242,35 +246,44 @@ def create_efficient_model(model_type='resnet18', num_classes=9, pretrained=True
 
 def train_single_model(args):
     """训练单个模型"""
-    print("=" * 70)
-    print("🚀 岩石图像分类 - 单模型训练")
-    print("=" * 70)
+    print("=" * 80)
+    print("SINGLE MODEL TRAINING")
+    print("=" * 80)
+    print()
+    sys.stdout.flush()
 
     # 检查数据
     if not os.path.exists('../data/rock-data'):
-        print("❌ 数据目录不存在，请确保 ../data/rock-data 文件夹存在")
+        print("ERROR: Data directory not found. Please ensure ../data/rock-data exists.")
+        sys.stdout.flush()
         return None
 
     # 设备信息
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"🖥️  使用设备: {device}")
+    print(f"Device: {device}")
     if torch.cuda.is_available():
-        print(f"🎮 GPU: {torch.cuda.get_device_name()}")
-        print(f"💾 GPU内存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+    print()
+    sys.stdout.flush()
 
     try:
         # 加载数据
-        print("\n📊 加载数据...")
+        print("Loading data...")
+        sys.stdout.flush()
         dataManager = DataManager()
-        train_loader, valid_loader, test_loader, class_names = dataManager.get_data_loaders()
+        train_loader, valid_loader, test_loader, class_names, class_weights = dataManager.get_data_loaders()
 
-        print(f"   训练样本: {len(train_loader.dataset):,}")
-        print(f"   验证样本: {len(valid_loader.dataset):,}")
-        print(f"   测试样本: {len(test_loader.dataset):,}")
-        print(f"   类别数量: {len(class_names)}")
+        print(f"  Training samples: {len(train_loader.dataset):,}")
+        print(f"  Validation samples: {len(valid_loader.dataset):,}")
+        print(f"  Test samples: {len(test_loader.dataset):,}")
+        print(f"  Number of classes: {len(class_names)}")
+        print(f"  Class weights: {class_weights}")
+        print()
+        sys.stdout.flush()
 
         # 创建模型
-        print(f"\n🧠 创建模型: {Config.MODEL_TYPE}")
+        print(f"Creating model: {Config.MODEL_TYPE}")
         if args.mode in ['quick', 'fast']:
             model = create_efficient_model(
                 model_type=Config.MODEL_TYPE,
@@ -288,30 +301,34 @@ def train_single_model(args):
 
         # 打印模型信息
         print_model_info(model)
+        print()
+        sys.stdout.flush()
 
-        # 创建训练器
-        print(f"\n🏃 开始训练 ({Config.EPOCHS} 轮)...")
+        # 创建训练器（传递类别权重）
         trainer = Trainer(
             model=model,
             train_loader=train_loader,
             valid_loader=valid_loader,
             test_loader=test_loader,
-            config=Config
+            config=Config,
+            class_weights=class_weights  # 传递类别权重
         )
 
         # 训练模型
         start_time = time.time()
+        print("Starting training...")
+        sys.stdout.flush()
         history, test_acc, predictions, targets = trainer.train()
         total_time = time.time() - start_time
 
-        print(f"\n⏱️  总训练时间: {total_time/60:.1f} 分钟")
+        print(f"\nTotal training time: {total_time/60:.2f} minutes")
 
         # 绘制训练历史
         if Config.SAVE_PLOTS:
             trainer.plot_training_history()
 
         # 评估模型
-        print("\n📈 模型评估...")
+        print("\nEvaluating model...")
         results = evaluate_model(
             predictions=predictions,
             targets=targets,
@@ -338,44 +355,45 @@ def train_single_model(args):
         return test_acc, results, trainer
 
     except Exception as e:
-        print(f"❌ 训练过程中出现错误: {e}")
+        print(f"Error during training: {e}")
         import traceback
         traceback.print_exc()
         return None
 
 def train_ensemble_models(args):
     """训练集成模型"""
-    print("=" * 70)
-    print("🤝 岩石图像分类 - 集成学习训练")
-    print("=" * 70)
+    print("=" * 80)
+    print("ENSEMBLE TRAINING")
+    print("=" * 80)
 
     # 检查数据
     if not os.path.exists('../data/rock-data'):
-        print("❌ 数据目录不存在，请确保 ../data/rock-data 文件夹存在")
+        print("ERROR: Data directory not found. Please ensure ../data/rock-data exists.")
         return None
 
     # 设备信息
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"🖥️  使用设备: {device}")
+    print(f"Device: {device}")
 
     try:
         # 加载数据
-        print("\n📊 加载数据...")
+        print("\nLoading data...")
         dataManager = DataManager()
         train_loader, valid_loader, test_loader, class_names = dataManager.get_data_loaders()
 
-        print(f"   训练样本: {len(train_loader.dataset):,}")
-        print(f"   验证样本: {len(valid_loader.dataset):,}")
-        print(f"   测试样本: {len(test_loader.dataset):,}")
-        print(f"   集成模型: {Config.ENSEMBLE_MODELS}")
+        print(f"  Training samples: {len(train_loader.dataset):,}")
+        print(f"  Validation samples: {len(valid_loader.dataset):,}")
+        print(f"  Test samples: {len(test_loader.dataset):,}")
+        print(f"  Ensemble models: {Config.ENSEMBLE_MODELS}")
+        print()
 
         # 训练多个模型
         models = {}
         val_accuracies = []
 
         for i, model_type in enumerate(Config.ENSEMBLE_MODELS):
-            print(f"\n🧠 训练模型 {i+1}/{len(Config.ENSEMBLE_MODELS)}: {model_type}")
-            print("-" * 50)
+            print(f"Training model {i+1}/{len(Config.ENSEMBLE_MODELS)}: {model_type}")
+            print("-" * 80)
 
             # 创建模型
             if args.mode in ['quick', 'fast']:
@@ -413,7 +431,7 @@ def train_ensemble_models(args):
             print(f"{model_type} 最佳验证准确率: {max(history['val_acc']):.4f}")
 
         # 集成预测
-        print(f"\n🎯 集成预测...")
+        print("\nPerforming ensemble prediction...")
         ensemble_predictions = []
         all_targets = []
 
@@ -444,7 +462,7 @@ def train_ensemble_models(args):
         ensemble_acc = sum(p == t for p, t in zip(ensemble_predictions, all_targets)) / len(all_targets)
 
         # 评估集成结果
-        print("\n📈 集成模型评估...")
+        print("\nEvaluating ensemble model...")
         results = evaluate_model(
             predictions=ensemble_predictions,
             targets=all_targets,
@@ -480,15 +498,16 @@ def train_ensemble_models(args):
         return ensemble_acc, results, models
 
     except Exception as e:
-        print(f"❌ 集成训练过程中出现错误: {e}")
+        print(f"Error during ensemble training: {e}")
         import traceback
         traceback.print_exc()
         return None
 
 def main():
     """主函数"""
-    print("🌟 岩石图像分类系统 v2.0")
-    print("=" * 70)
+    # 立即打印并刷新输出
+    print("Starting rock classification training...")
+    sys.stdout.flush()
 
     # 解析命令行参数
     args = parse_arguments()
@@ -501,18 +520,6 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.manual_seed(42)
 
-    # 显示配置信息
-    print(f"\n⚙️  配置信息:")
-    print(f"   模型: {Config.MODEL_TYPE}")
-    print(f"   训练轮数: {Config.EPOCHS}")
-    print(f"   批次大小: {Config.BATCH_SIZE}")
-    print(f"   学习率: {Config.LEARNING_RATE}")
-    print(f"   优化器: {Config.OPTIMIZER}")
-    print(f"   调度器: {Config.LR_SCHEDULER}")
-    print(f"   预训练: {Config.PRETRAINED}")
-    print(f"   混合精度: {Config.MIXED_PRECISION}")
-    print(f"   集成学习: {Config.ENSEMBLE}")
-
     try:
         if Config.ENSEMBLE:
             # 集成学习训练
@@ -520,53 +527,29 @@ def main():
             if result is not None:
                 ensemble_acc, results, models = result
 
-                print("\n🎉 集成学习训练完成!")
-                print(f"🎯 集成模型准确率: {ensemble_acc:.4f}")
-
-                if ensemble_acc >= 0.8:
-                    print("🏆 恭喜！达到了80%以上的目标准确率！")
-                elif ensemble_acc >= 0.75:
-                    print("✅ 达到了75%以上的准确率，非常接近目标！")
-                else:
-                    print("📈 准确率有待提升，建议尝试更多优化策略")
+                print()
+                print("=" * 80)
+                print("ENSEMBLE TRAINING COMPLETED")
+                print("=" * 80)
+                print(f"Final Ensemble Accuracy: {ensemble_acc*100:.2f}%")
+                print()
         else:
             # 单模型训练
             result = train_single_model(args)
             if result is not None:
                 test_acc, results, trainer = result
 
-                print("\n🎉 单模型训练完成!")
-                print(f"🎯 测试准确率: {test_acc:.4f}")
-
-                if test_acc >= 0.8:
-                    print("🏆 恭喜！达到了80%以上的目标准确率！")
-                elif test_acc >= 0.7:
-                    print("✅ 达到了70%以上的准确率，表现良好！")
-                    print("💡 建议尝试集成学习以进一步提升: --ensemble")
-                else:
-                    print("📈 准确率有待提升，建议:")
-                    print("   - 尝试集成学习: --ensemble")
-                    print("   - 增加训练轮数: --epochs 50")
-                    print("   - 使用更大模型: --model resnet50")
-
-        # GPU建议
-        if not torch.cuda.is_available():
-            print("\n💡 性能提升建议:")
-            print("   当前使用CPU训练。如果有NVIDIA GPU，可以安装CUDA版本:")
-            print("   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118")
-            print("   这将大大提升训练速度和模型性能！")
-
-        # 使用建议
-        print("\n📚 更多使用方式:")
-        print("   快速测试: python main.py --mode quick")
-        print("   快速训练: python main.py --mode fast")
-        print("   完整训练: python main.py --model resnet50 --epochs 50")
-        print("   集成学习: python main.py --ensemble --epochs 30")
+                print()
+                print("=" * 80)
+                print("TRAINING COMPLETED")
+                print("=" * 80)
+                print(f"Final Test Accuracy: {test_acc*100:.2f}%")
+                print()
 
     except KeyboardInterrupt:
-        print("\n⏹️  训练被用户中断")
+        print("\nTraining interrupted by user")
     except Exception as e:
-        print(f"\n❌ 程序执行出现错误: {e}")
+        print(f"\nError occurred: {e}")
         import traceback
         traceback.print_exc()
 

@@ -35,6 +35,7 @@ from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR, ReduceLROnPlatea
 import numpy as np
 import time
 import os
+import sys
 from collections import defaultdict
 import matplotlib.pyplot as plt
 from config import Config
@@ -249,7 +250,7 @@ class Trainer:
         - 自动保存最佳模型
     """
 
-    def __init__(self, model, train_loader, valid_loader, test_loader, config=Config):
+    def __init__(self, model, train_loader, valid_loader, test_loader, config=Config, class_weights=None):
         """
         初始化训练器
 
@@ -259,6 +260,7 @@ class Trainer:
             valid_loader (DataLoader): 验证数据加载器
             test_loader (DataLoader): 测试数据加载器
             config (Config): 配置对象
+            class_weights (Tensor, optional): 类别权重张量，用于处理类别不平衡
         """
         self.model = model
         self.train_loader = train_loader
@@ -266,12 +268,14 @@ class Trainer:
         self.test_loader = test_loader
         self.config = config
         self.device = config.DEVICE
+        # 保存模型类型名称，用于文件命名
+        self.model_type = config.MODEL_TYPE
 
         # 将模型移到设备（GPU或CPU）
         self.model.to(self.device)
 
-        # 设置损失函数
-        self.criterion = self._get_criterion()
+        # 设置损失函数（支持类别权重）
+        self.criterion = self._get_criterion(class_weights)
 
         # 设置优化器
         self.optimizer = self._get_optimizer()
@@ -301,10 +305,15 @@ class Trainer:
         os.makedirs(config.MODEL_SAVE_DIR, exist_ok=True)
         os.makedirs(config.RESULTS_DIR, exist_ok=True)
 
-    def _get_criterion(self):
-        """获取损失函数"""
+    def _get_criterion(self, class_weights=None):
+        """获取损失函数（支持类别权重）"""
         if self.config.LOSS_FUNCTION == 'cross_entropy':
-            return nn.CrossEntropyLoss()
+            if class_weights is not None:
+                # 将类别权重移到设备
+                class_weights = class_weights.to(self.device)
+                return nn.CrossEntropyLoss(weight=class_weights)
+            else:
+                return nn.CrossEntropyLoss()
         elif self.config.LOSS_FUNCTION == 'focal_loss':
             return FocalLoss()
         elif self.config.LOSS_FUNCTION == 'label_smoothing':
@@ -360,14 +369,32 @@ class Trainer:
             return None
 
     def train_epoch(self):
-        """训练一个epoch"""
+        """训练一个epoch（支持Mixup和CutMix数据增强）"""
         self.model.train()
         running_loss = 0.0
         correct = 0
         total = 0
 
+        # 检查是否使用Mixup/CutMix增强
+        use_mixup = hasattr(self.config, 'USE_MIXUP') and self.config.USE_MIXUP
+        use_cutmix = hasattr(self.config, 'USE_CUTMIX') and self.config.USE_CUTMIX
+
+        mixup_alpha = getattr(self.config, 'MIXUP_ALPHA', 0.4)
+        cutmix_beta = getattr(self.config, 'CUTMIX_BETA', 1.0)
+
         for batch_idx, (data, target) in enumerate(self.train_loader):
             data, target = data.to(self.device), target.to(self.device)
+
+            # 保存原始target用于准确率计算
+            original_target = target.clone()
+
+            # 应用数据增强（如果启用）
+            if use_mixup:
+                from data_loader import mixup_data
+                data, target_a, target_b, lam = mixup_data(data, target, alpha=mixup_alpha)
+            elif use_cutmix:
+                from data_loader import cutmix_data
+                data, target_a, target_b, lam = cutmix_data(data, target, beta=cutmix_beta)
 
             self.optimizer.zero_grad()
 
@@ -375,7 +402,16 @@ class Trainer:
                 # 混合精度训练
                 with torch.amp.autocast('cuda'):
                     output = self.model(data)
-                    loss = self.criterion(output, target)
+
+                    if use_mixup:
+                        # Mixup损失：线性插值两个标签的损失
+                        loss = lam * self.criterion(output, target_a) + (1 - lam) * self.criterion(output, target_b)
+                    elif use_cutmix:
+                        # CutMix损失：线性插值两个标签的损失
+                        loss = lam * self.criterion(output, target_a) + (1 - lam) * self.criterion(output, target_b)
+                    else:
+                        # 常规损失
+                        loss = self.criterion(output, target)
 
                 self.scaler.scale(loss).backward()
                 self.scaler.step(self.optimizer)
@@ -383,17 +419,35 @@ class Trainer:
             else:
                 # 常规训练
                 output = self.model(data)
-                loss = self.criterion(output, target)
+
+                if use_mixup:
+                    # Mixup损失：线性插值两个标签的损失
+                    loss = lam * self.criterion(output, target_a) + (1 - lam) * self.criterion(output, target_b)
+                elif use_cutmix:
+                    # CutMix损失：线性插值两个标签的损失
+                    loss = lam * self.criterion(output, target_a) + (1 - lam) * self.criterion(output, target_b)
+                else:
+                    # 常规损失
+                    loss = self.criterion(output, target)
+
                 loss.backward()
                 self.optimizer.step()
 
             running_loss += loss.item()
-            pred = output.argmax(dim=1, keepdim=True)
-            correct += pred.eq(target.view_as(pred)).sum().item()
-            total += target.size(0)
+
+            # 计算准确率（Mixup/CutMix时不计算训练准确率，因为标签是混合的）
+            if not use_mixup and not use_cutmix:
+                pred = output.argmax(dim=1, keepdim=True)
+                correct += pred.eq(original_target.view_as(pred)).sum().item()
+                total += original_target.size(0)
 
         epoch_loss = running_loss / len(self.train_loader)
-        epoch_acc = correct / total
+
+        # Mixup/CutMix时训练准确率设为0（无法准确计算）
+        if use_mixup or use_cutmix:
+            epoch_acc = 0.0
+        else:
+            epoch_acc = correct / total
 
         return epoch_loss, epoch_acc
 
@@ -462,10 +516,29 @@ class Trainer:
 
     def train(self):
         """完整的训练过程"""
-        print("开始训练...")
-        print(f"设备: {self.device}")
-        print(f"训练轮数: {self.config.EPOCHS}")
-        print("-" * 50)
+        # 立即打印并刷新输出，确保用户能看到程序启动
+        print("Initializing training...")
+        sys.stdout.flush()
+
+        # 训练信息摘要
+        print("=" * 80)
+        print("TRAINING CONFIGURATION")
+        print("=" * 80)
+        print(f"Device: {self.device}")
+        if self.device.type == 'cuda':
+            print(f"GPU: {torch.cuda.get_device_name(0)}")
+            print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+        print(f"Model: {self.config.MODEL_TYPE}")
+        print(f"Epochs: {self.config.EPOCHS}")
+        print(f"Batch Size: {self.config.BATCH_SIZE}")
+        print(f"Initial Learning Rate: {self.config.LEARNING_RATE}")
+        print(f"Optimizer: {self.config.OPTIMIZER}")
+        print(f"Scheduler: {self.config.LR_SCHEDULER}")
+        print(f"Mixed Precision: {self.config.MIXED_PRECISION}")
+        print(f"Early Stopping: {self.config.EARLY_STOPPING}")
+        print("=" * 80)
+        print()
+        sys.stdout.flush()
 
         best_val_acc = 0.0
         start_time = time.time()
@@ -495,42 +568,72 @@ class Trainer:
 
             epoch_time = time.time() - epoch_start_time
 
-            # 打印进度
-            print(f'Epoch {epoch+1:3d}/{self.config.EPOCHS} | '
-                  f'Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} | '
-                  f'Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f} | '
-                  f'LR: {self.optimizer.param_groups[0]["lr"]:.6f} | '
-                  f'Time: {epoch_time:.2f}s')
+            # 打印进度（更清晰的格式）
+            print(f"[{epoch+1:3d}/{self.config.EPOCHS}] "
+                  f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc*100:5.2f}% | "
+                  f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc*100:5.2f}% | "
+                  f"LR: {self.optimizer.param_groups[0]['lr']:.6f} | "
+                  f"Time: {epoch_time:.1f}s", flush=True)
 
             # 保存最佳模型
             if val_acc > best_val_acc:
                 best_val_acc = val_acc
                 self.save_model('best_model.pth')
-                print(f'新的最佳验证准确率: {best_val_acc:.4f}')
+                print(f"  -> New best validation accuracy: {best_val_acc*100:.2f}%", flush=True)
 
             # 早停检查
             if self.early_stopping is not None:
                 if self.early_stopping(val_loss, self.model):
-                    print(f'早停触发，在第 {epoch+1} 轮停止训练')
+                    print(f"\nEarly stopping triggered at epoch {epoch+1}", flush=True)
                     break
 
             # 定期保存检查点
             if (epoch + 1) % 10 == 0:
                 self.save_model(f'checkpoint_epoch_{epoch+1}.pth')
+                print(f"  -> Checkpoint saved", flush=True)
 
         total_time = time.time() - start_time
-        print(f'\n训练完成! 总时间: {total_time:.2f}s')
-        print(f'最佳验证准确率: {best_val_acc:.4f}')
+
+        print()
+        print("=" * 80)
+        print("TRAINING SUMMARY")
+        print("=" * 80)
+        print(f"Total Training Time: {total_time/60:.2f} minutes ({total_time:.1f} seconds)")
+        print(f"Best Validation Accuracy: {best_val_acc*100:.2f}%")
+        print(f"Average Time per Epoch: {total_time/(epoch+1):.2f} seconds")
+        print("=" * 80)
+        print()
+        sys.stdout.flush()
 
         # 测试最佳模型
+        print("Testing best model on test set...")
+        sys.stdout.flush()
         self.load_model('best_model.pth')
         test_loss, test_acc, predictions, targets = self.test()
-        print(f'测试准确率: {test_acc:.4f}')
+
+        print()
+        print("=" * 80)
+        print("TEST RESULTS")
+        print("=" * 80)
+        print(f"Test Accuracy: {test_acc*100:.2f}%")
+        print(f"Test Loss: {test_loss:.4f}")
+        print("=" * 80)
+        sys.stdout.flush()
 
         return self.history, test_acc, predictions, targets
 
     def save_model(self, filename):
-        """保存模型"""
+        """
+        保存模型
+        
+        参数：
+            filename (str): 文件名（如 'best_model.pth' 或 'checkpoint_epoch_10.pth'）
+                           如果文件名是 'best_model.pth'，会自动添加模型类型前缀
+        """
+        # 如果是最佳模型，自动添加模型类型前缀
+        if filename == 'best_model.pth':
+            filename = f'best_{self.model_type}.pth'
+        
         filepath = os.path.join(self.config.MODEL_SAVE_DIR, filename)
         torch.save({
             'model_state_dict': self.model.state_dict(),
@@ -540,15 +643,25 @@ class Trainer:
         }, filepath)
 
     def load_model(self, filename):
-        """加载模型"""
+        """
+        加载模型
+        
+        参数：
+            filename (str): 文件名
+                          如果文件名是 'best_model.pth'，会自动添加当前模型类型前缀
+        """
+        # 如果是最佳模型，自动添加模型类型前缀
+        if filename == 'best_model.pth':
+            filename = f'best_{self.model_type}.pth'
+        
         filepath = os.path.join(self.config.MODEL_SAVE_DIR, filename)
         if os.path.exists(filepath):
             # 修复PyTorch 2.6的weights_only问题
             checkpoint = torch.load(filepath, map_location=self.device, weights_only=False)
             self.model.load_state_dict(checkpoint['model_state_dict'])
-            print(f'模型已从 {filepath} 加载')
+            print(f'Model loaded from {filepath}')
         else:
-            print(f'模型文件 {filepath} 不存在')
+            print(f'Model file {filepath} not found')
 
     def plot_training_history(self):
         """绘制训练历史"""

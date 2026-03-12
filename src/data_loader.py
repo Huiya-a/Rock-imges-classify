@@ -18,6 +18,7 @@ import torch
 from torch.utils.data import DataLoader, random_split
 from torchvision import datasets, transforms
 import os
+import numpy as np
 from config import Config
 
 class DataManager:
@@ -236,7 +237,10 @@ class DataManager:
             pin_memory=True if self.config.DEVICE.type == 'cuda' else False
         )
 
-        return train_loader, valid_loader, test_loader, train_dataset.classes
+        # 计算类别权重
+        class_weights = calculate_class_weights(train_dataset)
+
+        return train_loader, valid_loader, test_loader, train_dataset.classes, class_weights
 
     def get_class_names(self):
         """
@@ -349,3 +353,178 @@ class DataManager:
                                 num_workers=num_workers, pin_memory=torch.cuda.is_available())
 
         return train_loader, valid_loader, test_loader, train_dataset.classes
+
+
+# ==================== Mixup和CutMix数据增强函数 ====================
+
+def mixup_data(x, y, alpha=0.4):
+    """
+    Mixup数据增强 - 混合两张图像和标签
+
+    原理：
+    通过线性插值混合两张图像和对应的标签，创建新的训练样本。
+    这种方法简单但有效，能够显著提升模型在小数据集上的性能。
+
+    公式：
+    x̃ = λ * x_i + (1-λ) * x_j
+    ỹ = λ * y_i + (1-λ) * y_j
+
+    其中：
+    - x_i, x_j: 两张输入图像
+    - y_i, y_j: 两张图像的标签
+    - λ: 混合系数，服从Beta(α, α)分布
+    - x̃: 混合后的图像
+    - ỹ: 混合后的标签
+
+    参数：
+        x (Tensor): 输入图像张量，形状(batch_size, C, H, W)
+        y (Tensor): 标签张量，形状(batch_size,)
+        alpha (float): Beta分布的形状参数，默认0.4
+
+    返回：
+        mixed_x (Tensor): 混合后的图像
+        y_a (Tensor): 第一个标签
+        y_b (Tensor): 第二个标签
+        lam (float): 混合系数
+
+    参考文献：
+        Zhang et al., "mixup: Beyond Empirical Risk Minimization", ICLR 2018
+    """
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1
+
+    batch_size = x.size()[0]
+    index = torch.randperm(batch_size).to(x.device)
+
+    mixed_x = lam * x + (1 - lam) * x[index, :]
+    y_a, y_b = y, y[index]
+
+    return mixed_x, y_a, y_b, lam
+
+
+def cutmix_data(x, y, beta=1.0):
+    """
+    CutMix数据增强 - 图像块级别混合
+
+    原理：
+    从一张图像中裁剪一个矩形区域，粘贴到另一张图像上，
+    同时按裁剪区域的比例混合标签。这种方法保留了空间结构信息，
+    强制模型学习局部特征。
+
+    公式：
+    x̃ = M ⊙ x_i + (1-M) ⊙ x_j
+    ỹ = λ * y_i + (1-λ) * y_j
+
+    其中：
+    - M: 二进制掩码（1表示来自x_i，0表示来自x_j）
+    - λ: 裁剪区域占总图像的比例
+    - x_i, x_j: 两张输入图像
+    - y_i, y_j: 两张图像的标签
+    - x̃: 混合后的图像
+    - ỹ: 混合后的标签
+
+    参数：
+        x (Tensor): 输入图像张量，形状(batch_size, C, H, W)
+        y (Tensor): 标签张量，形状(batch_size,)
+        beta (float): Beta分布的形状参数，默认1.0
+
+    返回：
+        mixed_x (Tensor): 混合后的图像
+        y_a (Tensor): 第一个标签
+        y_b (Tensor): 第二个标签
+        lam (float): 混合系数（裁剪区域比例）
+
+    参考文献：
+        Yun et al., "CutMix: Regularization Strategy to Train Strong Classifiers
+                   with Localizable Features", ICCV 2019
+    """
+    lam = np.random.beta(beta, beta)
+    rand_index = torch.randperm(x.size()[0]).to(x.device)
+
+    # 生成随机裁剪区域
+    bbx1, bby1, bbx2, bby2 = rand_bbox(x.size(), lam)
+
+    # 将x_j的裁剪区域粘贴到x_i上
+    x[:, :, bbx1:bbx2, bby1:bby2] = x[rand_index, :, bbx1:bbx2, bby1:bby2]
+
+    # 调整λ（确保λ=裁剪区域比例）
+    lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (x.size()[-1] * x.size()[-2]))
+
+    y_a, y_b = y, y[rand_index]
+
+    return x, y_a, y_b, lam
+
+
+def rand_bbox(size, lam):
+    """
+    生成随机裁剪区域用于CutMix
+
+    参数：
+        size (tuple): 输入张量的尺寸，格式为(B, C, H, W)
+        lam (float): 裁剪区域占总图像的比例
+
+    返回：
+        bbx1, bby1, bbx2, bby2: 裁剪区域的坐标
+    """
+    W = size[2]
+    H = size[3]
+
+    cut_rat = np.sqrt(1. - lam)
+    cut_w = int(W * cut_rat)
+    cut_h = int(H * cut_rat)
+
+    # 统一分布的裁剪中心
+    cx = np.random.randint(W)
+    cy = np.random.randint(H)
+
+    bbx1 = np.clip(cx - cut_w // 2, 0, W)
+    bby1 = np.clip(cy - cut_h // 2, 0, H)
+    bbx2 = np.clip(cx + cut_w // 2, 0, W)
+    bby2 = np.clip(cy + cut_h // 2, 0, H)
+
+    return bbx1, bby1, bbx2, bby2
+
+
+# ==================== 类别不平衡处理函数 ====================
+
+def calculate_class_weights(train_dataset):
+    """
+    计算类别权重（基于样本数量）
+
+    原理：
+    通过对少数类分配更大的权重，使模型在训练时更加关注少数类样本。
+    权重计算公式：weight_i = total_samples / (num_classes * samples_i)
+
+    参数：
+        train_dataset: 训练数据集对象
+
+    返回：
+        weights (Tensor): 类别权重张量，形状(num_classes,)
+
+    示例：
+        如果有3个类别，样本数分别为[100, 50, 25]，则权重为：
+        - 类别0: 150 / (3 * 100) = 0.5
+        - 类别1: 150 / (3 * 50) = 1.0
+        - 类别2: 150 / (3 * 25) = 2.0
+    """
+    from collections import Counter
+    import torch
+
+    # 统计每个类别的样本数
+    class_counts = Counter([label for _, label in train_dataset.samples])
+    total_samples = len(train_dataset)
+    num_classes = len(class_counts)
+
+    # 计算权重：总样本数 / (类别数 * 该类别样本数)
+    class_weights = {}
+    for class_id, count in class_counts.items():
+        weight = total_samples / (num_classes * count)
+        class_weights[class_id] = weight
+
+    # 转换为张量（按类别ID排序）
+    weights = torch.tensor([class_weights[i] for i in range(num_classes)],
+                          dtype=torch.float32)
+
+    return weights

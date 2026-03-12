@@ -122,21 +122,40 @@ def evaluate_model(predictions, targets, class_names, save_dir=None):
     }
     
     # 打印结果
-    print("=" * 60)
-    print("模型评估结果")
-    print("=" * 60)
-    print(f"总体准确率: {accuracy:.4f}")
-    print(f"宏平均 - 精确率: {macro_precision:.4f}, 召回率: {macro_recall:.4f}, F1分数: {macro_f1:.4f}")
-    print(f"微平均 - 精确率: {micro_precision:.4f}, 召回率: {micro_recall:.4f}, F1分数: {micro_f1:.4f}")
-    print("\n各类别详细结果:")
-    print("-" * 60)
+    print()
+    print("=" * 80)
+    print("DETAILED EVALUATION RESULTS")
+    print("=" * 80)
+    print()
+    print("OVERALL METRICS:")
+    print(f"  Accuracy:          {accuracy*100:6.2f}%")
+    print()
+    print("MACRO AVERAGE:")
+    print(f"  Precision:         {macro_precision*100:6.2f}%")
+    print(f"  Recall:            {macro_recall*100:6.2f}%")
+    print(f"  F1-Score:          {macro_f1*100:6.2f}%")
+    print()
+    print("MICRO AVERAGE:")
+    print(f"  Precision:         {micro_precision*100:6.2f}%")
+    print(f"  Recall:            {micro_recall*100:6.2f}%")
+    print(f"  F1-Score:          {micro_f1*100:6.2f}%")
+    print()
+    print("-" * 80)
+    print("PER-CLASS PERFORMANCE:")
+    print("-" * 80)
+    print(f"{'Class':<25} {'Precision':>12} {'Recall':>12} {'F1-Score':>12} {'Support':>10}")
+    print("-" * 80)
     
     for i, class_name in enumerate(class_names):
-        print(f"{class_name:20s} - 精确率: {precision[i]:.4f}, 召回率: {recall[i]:.4f}, "
-              f"F1分数: {f1[i]:.4f}, 支持数: {support[i]}")
+        print(f"{class_name:<25} {precision[i]*100:11.2f}% {recall[i]*100:11.2f}% {f1[i]*100:11.2f}% {support[i]:>10}")
     
-    print("\n分类报告:")
+    print("-" * 80)
+    print()
+    print("CLASSIFICATION REPORT:")
+    print("-" * 80)
     print(classification_report(targets, predictions, target_names=class_names))
+    print("=" * 80)
+    print()
     
     # 保存结果
     if save_dir:
@@ -185,9 +204,9 @@ def plot_confusion_matrix(cm, class_names, save_path=None, figsize=(10, 8)):
                 yticklabels=class_names,
                 cbar_kws={'label': 'Percentage (%)'})
     
-    plt.title('混淆矩阵 (百分比)', fontsize=16, pad=20)
-    plt.xlabel('预测标签', fontsize=12)
-    plt.ylabel('真实标签', fontsize=12)
+    plt.title('Confusion Matrix (Percentage)', fontsize=16, pad=20)
+    plt.xlabel('Predicted Label', fontsize=12)
+    plt.ylabel('True Label', fontsize=12)
     plt.xticks(rotation=45, ha='right')
     plt.yticks(rotation=0)
     plt.tight_layout()
@@ -213,13 +232,13 @@ def plot_class_performance(precision, recall, f1, class_names, save_path=None):
     
     fig, ax = plt.subplots(figsize=(15, 8))
     
-    bars1 = ax.bar(x - width, precision, width, label='精确率', alpha=0.8)
-    bars2 = ax.bar(x, recall, width, label='召回率', alpha=0.8)
-    bars3 = ax.bar(x + width, f1, width, label='F1分数', alpha=0.8)
+    bars1 = ax.bar(x - width, precision, width, label='Precision', alpha=0.8)
+    bars2 = ax.bar(x, recall, width, label='Recall', alpha=0.8)
+    bars3 = ax.bar(x + width, f1, width, label='F1-Score', alpha=0.8)
     
-    ax.set_xlabel('类别')
-    ax.set_ylabel('分数')
-    ax.set_title('各类别性能对比')
+    ax.set_xlabel('Class')
+    ax.set_ylabel('Score')
+    ax.set_title('Class-wise Performance Comparison')
     ax.set_xticks(x)
     ax.set_xticklabels(class_names, rotation=45, ha='right')
     ax.legend()
@@ -266,7 +285,7 @@ def save_predictions(predictions, targets, class_names, save_path):
     import pandas as pd
     df = pd.DataFrame(results)
     df.to_csv(save_path, index=False, encoding='utf-8')
-    print(f"预测结果已保存到: {save_path}")
+    print(f"Predictions saved to: {save_path}")
 
 def calculate_model_size(model):
     """
@@ -305,19 +324,18 @@ def calculate_model_size(model):
 def print_model_info(model, input_size=(3, 224, 224)):
     """
     打印模型信息
-    
+
     Args:
         model: PyTorch模型
         input_size: 输入尺寸
     """
     model_info = calculate_model_size(model)
-    
-    print("=" * 50)
-    print("模型信息")
-    print("=" * 50)
-    print(f"参数数量: {model_info['param_count']:,}")
-    print(f"参数大小: {model_info['param_size_mb']:.2f} MB")
-    print(f"缓冲区数量: {model_info['buffer_count']:,}")
-    print(f"缓冲区大小: {model_info['buffer_size_mb']:.2f} MB")
-    print(f"总模型大小: {model_info['total_size_mb']:.2f} MB")
-    print("=" * 50)
+
+    print("MODEL INFORMATION")
+    print("-" * 80)
+    print(f"Total Parameters:  {model_info['param_count']:,}")
+    print(f"Parameter Size:    {model_info['param_size_mb']:.2f} MB")
+    print(f"Buffer Count:      {model_info['buffer_count']:,}")
+    print(f"Buffer Size:       {model_info['buffer_size_mb']:.2f} MB")
+    print(f"Total Model Size:  {model_info['total_size_mb']:.2f} MB")
+    print("-" * 80)

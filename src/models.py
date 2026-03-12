@@ -479,6 +479,224 @@ class VGG(nn.Module):
         """前向传播"""
         return self.backbone(x)
 
+class DenseNetModel(nn.Module):
+    """
+    基于DenseNet的迁移学习模型
+
+    架构特点：
+        - 密集连接：每一层都与前面所有层连接
+        - 特征重用：特征可以被多次使用
+        - 参数效率：参数量少，性能高
+
+    迁移学习策略：
+        - 冻结大部分DenseBlock
+        - 微调最后一个DenseBlock
+        - 替换分类器
+
+    性能：
+        - DenseNet121：轻量级，参数量少，适合小数据集
+
+    使用场景：
+        - 小数据集（参数少，不易过拟合）
+        - 特征重用需求高的任务
+        - 集成学习的基模型
+    """
+
+    def __init__(self, model_name='densenet121', num_classes=9, pretrained=True, dropout_rate=0.5):
+        """
+        初始化DenseNet迁移学习模型
+
+        参数：
+            model_name (str): DenseNet版本（'densenet121'）
+            num_classes (int): 分类类别数量
+            pretrained (bool): 是否使用ImageNet预训练权重
+            dropout_rate (float): Dropout丢弃率
+        """
+        super(DenseNetModel, self).__init__()
+
+        # 加载预训练模型
+        if model_name == 'densenet121':
+            self.backbone = models.densenet121(pretrained=pretrained)
+            num_features = self.backbone.classifier.in_features
+        else:
+            raise ValueError(f"Unsupported model: {model_name}")
+
+        # ==================== 迁移学习策略 ====================
+        # 冻结所有参数
+        for param in self.backbone.parameters():
+            param.requires_grad = False
+
+        # 解冻最后一个DenseBlock（微调最高级特征）
+        for param in self.backbone.features.denseblock4.parameters():
+            param.requires_grad = True
+
+        # ==================== 替换分类器 ====================
+        self.backbone.classifier = nn.Sequential(
+            nn.Dropout(dropout_rate),
+            nn.Linear(num_features, 512),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout_rate),
+            nn.Linear(512, num_classes)
+        )
+
+        # 确保分类器参数可训练
+        for param in self.backbone.classifier.parameters():
+            param.requires_grad = True
+
+    def forward(self, x):
+        """前向传播"""
+        return self.backbone(x)
+
+class ConvNeXtModel(nn.Module):
+    """
+    基于ConvNeXt的迁移学习模型
+
+    架构特点：
+        - 现代CNN架构，融合Transformer设计理念
+        - 大卷积核（7x7）代替传统3x3卷积
+        - 层归一化（LayerNorm）代替批归一化
+        - 倒瓶颈结构，参数效率高
+
+    迁移学习策略：
+        - 冻结大部分Stage
+        - 微调最后一个Stage
+        - 替换分类器
+
+    性能：
+        - ConvNeXt Tiny：高效，准确率~75%
+        - ConvNeXt Base：更高精度，准确率~77%
+
+    使用场景：
+        - 需要现代化CNN架构
+        - 平衡性能和效率
+        - 集成学习的多样性来源
+    """
+
+    def __init__(self, model_name='convnext_tiny', num_classes=9, pretrained=True, dropout_rate=0.5):
+        """
+        初始化ConvNeXt迁移学习模型
+
+        参数：
+            model_name (str): ConvNeXt版本（'convnext_tiny', 'convnext_base'）
+            num_classes (int): 分类类别数量
+            pretrained (bool): 是否使用ImageNet预训练权重
+            dropout_rate (float): Dropout丢弃率
+        """
+        super(ConvNeXtModel, self).__init__()
+
+        try:
+            import timm
+        except ImportError:
+            raise ImportError("请先安装timm库: pip install timm")
+
+        # 加载预训练模型
+        if model_name == 'convnext_tiny':
+            self.backbone = timm.create_model('convnext_tiny', pretrained=pretrained)
+            num_features = self.backbone.head.fc.in_features
+        elif model_name == 'convnext_base':
+            self.backbone = timm.create_model('convnext_base', pretrained=pretrained)
+            num_features = self.backbone.head.fc.in_features
+        else:
+            raise ValueError(f"Unsupported model: {model_name}")
+
+        # ==================== 迁移学习策略 ====================
+        # 冻结所有参数
+        for param in self.backbone.parameters():
+            param.requires_grad = False
+
+        # 解冻最后一个Stage（微调高级特征）
+        for param in self.backbone.stages[-1].parameters():
+            param.requires_grad = True
+
+        # ==================== 替换分类器 ====================
+        self.backbone.head.fc = nn.Sequential(
+            nn.Dropout(dropout_rate),
+            nn.Linear(num_features, 512),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout_rate),
+            nn.Linear(512, num_classes)
+        )
+
+        # 确保分类器参数可训练
+        for param in self.backbone.head.fc.parameters():
+            param.requires_grad = True
+
+    def forward(self, x):
+        """前向传播"""
+        return self.backbone(x)
+
+class ViTModel(nn.Module):
+    """
+    基于Vision Transformer的迁移学习模型
+
+    架构特点：
+        - 完全基于注意力机制，没有卷积层
+        - 图像分块作为"词"，通过Transformer处理
+        - 全局上下文建模能力强
+        - 可解释性好（注意力权重可视化）
+
+    迁移学习策略：
+        - 冻结大部分Transformer块
+        - 微调最后几个Transformer块
+        - 替换分类器
+
+    性能：
+        - ViT Base：全局建模能力强，准确率~78%
+        - ViT Small：轻量级，准确率~76%
+
+    使用场景：
+        - 复杂纹理识别
+        - 需要全局上下文的任务
+        - 可解释性要求高的场景
+    """
+
+    def __init__(self, model_name='vit_base_patch16_224', num_classes=9, pretrained=True, dropout_rate=0.5):
+        """
+        初始化Vision Transformer迁移学习模型
+
+        参数：
+            model_name (str): ViT版本（'vit_base_patch16_224', 'vit_small_patch16_224'）
+            num_classes (int): 分类类别数量
+            pretrained (bool): 是否使用ImageNet预训练权重
+            dropout_rate (float): Dropout丢弃率
+        """
+        super(ViTModel, self).__init__()
+
+        try:
+            import timm
+        except ImportError:
+            raise ImportError("请先安装timm库: pip install timm")
+
+        # 加载预训练模型
+        self.backbone = timm.create_model(model_name, pretrained=pretrained)
+        num_features = self.backbone.head.in_features
+
+        # ==================== 迁移学习策略 ====================
+        # 冻结所有参数
+        for param in self.backbone.parameters():
+            param.requires_grad = False
+
+        # 解冻最后几个Transformer块（微调高级特征）
+        for param in self.backbone.blocks[-4:].parameters():
+            param.requires_grad = True
+
+        # ==================== 替换分类器 ====================
+        self.backbone.head = nn.Sequential(
+            nn.Dropout(dropout_rate),
+            nn.Linear(num_features, 512),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout_rate),
+            nn.Linear(512, num_classes)
+        )
+
+        # 确保分类器参数可训练
+        for param in self.backbone.head.parameters():
+            param.requires_grad = True
+
+    def forward(self, x):
+        """前向传播"""
+        return self.backbone(x)
+
 def get_model(model_type='resnet50', num_classes=9, pretrained=True, dropout_rate=0.5):
     """
     模型工厂函数 - 根据类型创建模型
@@ -489,6 +707,9 @@ def get_model(model_type='resnet50', num_classes=9, pretrained=True, dropout_rat
         - 'efficientnet_b0/b1/b2': EfficientNet系列
         - 'inception_v3': InceptionV3
         - 'vgg11/13/16': VGG系列
+        - 'densenet121/161/169': DenseNet系列（新增）
+        - 'convnext_tiny/base': ConvNeXt系列（新增）
+        - 'vit_base_patch16_224': Vision Transformer（新增）
 
     参数：
         model_type (str): 模型类型名称
@@ -527,6 +748,27 @@ def get_model(model_type='resnet50', num_classes=9, pretrained=True, dropout_rat
         )
     elif model_type.startswith('vgg'):
         return VGG(
+            model_name=model_type,
+            num_classes=num_classes,
+            pretrained=pretrained,
+            dropout_rate=dropout_rate
+        )
+    elif model_type.startswith('densenet'):
+        return DenseNetModel(
+            model_name=model_type,
+            num_classes=num_classes,
+            pretrained=pretrained,
+            dropout_rate=dropout_rate
+        )
+    elif model_type.startswith('convnext'):
+        return ConvNeXtModel(
+            model_name=model_type,
+            num_classes=num_classes,
+            pretrained=pretrained,
+            dropout_rate=dropout_rate
+        )
+    elif model_type.startswith('vit'):
+        return ViTModel(
             model_name=model_type,
             num_classes=num_classes,
             pretrained=pretrained,

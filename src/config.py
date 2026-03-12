@@ -55,7 +55,7 @@ class Config:
     """数据加载和预处理的参数设置"""
 
     # 输入图像尺寸（注意：InceptionV3需要299，其他模型通常224）
-    IMAGE_SIZE = 299
+    IMAGE_SIZE = 224
     # 批次大小（根据GPU显存调整：8-128，显存不足时减小）
     BATCH_SIZE = 32
     # 数据加载工作进程数（建议设置为CPU核心数的一半）
@@ -89,7 +89,7 @@ class Config:
     # 是否启用早停机制
     EARLY_STOPPING = True
     # 耐心值：验证损失不降低的容忍轮数（推荐7-20轮）
-    PATIENCE = 15
+    PATIENCE = 10
     # 最小改进阈值：验证损失降低幅度小于此值时不视为改进
     MIN_DELTA = 0.001
 
@@ -114,17 +114,41 @@ class Config:
     """
 
     AUGMENTATION = {
-        'rotation': 30,              # 随机旋转：±30度
+        'rotation': 45,              # 随机旋转：±45度（增强）
         'horizontal_flip': 0.5,      # 50%概率水平翻转
-        'vertical_flip': 0.3,        # 30%概率垂直翻转
-        'brightness': 0.2,           # 亮度调整：±20%
-        'contrast': 0.2,             # 对比度调整：±20%
+        'vertical_flip': 0.5,        # 50%概率垂直翻转（增强）
+        'brightness': 0.3,           # 亮度调整：±30%（增强）
+        'contrast': 0.3,             # 对比度调整：±30%（增强）
         'saturation': 0.2,           # 饱和度调整：±20%
         'hue': 0.1,                  # 色调调整：±0.1
-        'gaussian_blur': 0.3,        # 30%概率应用高斯模糊
-        'random_crop': 0.8,          # 80%概率随机裁剪
+        'gaussian_blur': 0.5,        # 50%概率应用高斯模糊（增强）
+        'random_crop': 0.7,          # 70%概率随机裁剪（增强，更多裁剪）
         'color_jitter': 0.4          # 颜色抖动强度
     }
+
+    # ==================== 高级数据增强配置 ====================
+    """
+    Mixup和CutMix数据增强配置
+
+    Mixup: 通过线性插值混合两张图像和标签
+    CutMix: 通过裁剪区域替换混合两张图像和标签
+
+    注意：Mixup和CutMix不能同时启用（当前实现）
+    
+    实验结论：
+    - Mixup和CutMix都不适合岩石分类任务
+    - Mixup: 测试准确率70.11%（低于基线71.84%）
+    - CutMix: 测试准确率70.69%（低于基线71.84%）
+    - 结论：禁用Mixup和CutMix，保持基线
+    """
+
+    # Mixup配置
+    USE_MIXUP = False  # 是否使用Mixup增强（已禁用，效果不佳）
+    MIXUP_ALPHA = 0.4  # Mixup的alpha参数（控制混合强度）
+
+    # CutMix配置
+    USE_CUTMIX = False  # 是否使用CutMix增强（已禁用，效果不佳）
+    CUTMIX_BETA = 1.0  # CutMix的beta参数（控制裁剪区域大小）
 
     # ==================== 模型参数配置 ====================
     """模型架构和训练相关的参数设置"""
@@ -134,7 +158,7 @@ class Config:
     # 是否使用ImageNet预训练权重（True=迁移学习，False=从零训练）
     PRETRAINED = True
     # Dropout丢弃率（防止过拟合，推荐0.3-0.7）
-    DROPOUT_RATE = 0.5
+    DROPOUT_RATE = 0.6
 
     # ==================== 集成学习配置 ====================
     """多模型集成策略，通过组合多个模型提升预测准确率"""
@@ -148,7 +172,7 @@ class Config:
     """训练过程中的损失函数选择"""
 
     # 损失函数类型（可选：'cross_entropy'交叉熵, 'focal_loss'焦点损失, 'label_smoothing'标签平滑）
-    LOSS_FUNCTION = 'cross_entropy'
+    LOSS_FUNCTION = 'label_smoothing'
     # 标签平滑系数（仅在label_smoothing模式下生效，推荐0.1）
     LABEL_SMOOTHING = 0.1
 
